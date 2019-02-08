@@ -1,0 +1,10 @@
+name = "ParallelMCWF"
+uuid = "1bb8a2ca-2bc6-11e9-3145-d1c52e16cecb"
+authors = ["Z-Denis <zakari.denis@univ-paris-diderot.fr>"]
+version = "0.1.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
