@@ -1,25 +1,81 @@
+"""
+Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@ref).
+"""
 module ParallelMCWF
-export multithreaded_mcwf, distributed_mcwf, read_saves
+export pmcwf, multithreaded_mcwf, distributed_mcwf, read_saves
 
-using Distributed, Base.Threads, ProgressMeter, JLD2
-@everywhere using QuantumOptics, QuantumOptics.timeevolution.timeevolution_mcwf, DifferentialEquations
-@everywhere using Random; Random.seed!(0)
+using Distributed, Base.Threads
+using ProgressMeter, JLD2#, QuantumOptics
+import OrdinaryDiffEq
+using QuantumOptics.bases, QuantumOptics.states, QuantumOptics.operators
+using QuantumOptics.operators_dense, QuantumOptics.operators_sparse
+using QuantumOptics.timeevolution
+using QuantumOptics.operators_lazysum, QuantumOptics.operators_lazytensor, QuantumOptics.operators_lazyproduct
+@everywhere using QuantumOptics.timeevolution.timeevolution_mcwf#, QuantumOptics
+const DecayRates = Union{Vector{Float64}, Matrix{Float64}, Nothing}
+Base.@pure pure_inference(fout,T) = Core.Compiler.return_type(fout, T)
 
 # Operates the tensor product of all arguments
 @everywhere ⨂(x) = length(x) > 1 ? reduce(⊗, x) : x[1];
 # Operates the sum of all arguments
 @everywhere ∑(x) = sum(x);
 
-"""
-Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@ref).
-"""
-#module ParallelMCWF
-#export multithreaded_mcwf, distributed_mcwf, tmap!
+function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, parallel_type::Symbol = :none,
+        seed=rand(UInt), rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
+        display_beforeevent=false, display_afterevent=false,
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B}}
+    @assert parallel_type in [:none, :threads, :pmap] "Invalid parallel type. Type '$parallel_type' not available."
+
+    if parallel_type == :none
+        return serial_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    elseif parallel_type == :threads
+        return multithreaded_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    elseif parallel_type == :pmap
+        return distributed_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    end
+end
+
+function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, seed=rand(UInt), rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
+        display_beforeevent=false, display_afterevent=false,
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B}}
+    # Pre-allocate an array for holding each MC simulation
+    out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
+    sols::Array{Tuple{Vector{Float64},Vector{out_type}},1} = fill((Vector{Float64}(),Vector{out_type}()),Ntrajectories);
+    for i in 1:Ntrajectories
+        sols[i] = timeevolution.mcwf(tspan,psi0,H,J;
+            seed=seed, rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg, kwargs...);
+    end
+    return sols;
+end
 
 """
-    multithreaded_mcwf(tspan, psi0, H, J, nb_trajs; <keyword arguments>)
+    multithreaded_mcwf(tspan, psi0, H, J; Ntrajectories, <keyword arguments>)
 
-Integrate `nb_trajs` MCWF trajectories parallely on `Threads.nthreads()` threads.
+Integrate `Ntrajectories` MCWF trajectories parallely on `Threads.nthreads()` threads.
 Arguments are passed internally to `QuantumOptics.timeevolution.mcwf`.
 
 # Arguments
@@ -30,11 +86,10 @@ with kets uniformly drawn from the Hilbert space.
 * `H`: Arbitrary Operator specifying the Hamiltonian.
 * `J`: Vector containing all jump operators which can be of any arbitrary
 operator type.
-* `nb_trajs=1`: Number of trajectories to be averaged.
+* `Ntrajectories=1`: Number of trajectories to be averaged.
+* `seed=rand()`: Seed used for the random number generator.
 * `rates=ones()`: Vector of decay rates.
 * `fout`: If given, this function `fout(t, psi)` is called every time an
-output should be displayed.
-* `dmfout`: If given, this function `dmfout(rho)` is called every time an
 output should be displayed.
 * `Jdagger=dagger.(J)`: Vector containing the hermitian conjugates of the jump
 operators. If they are not given they are calculated automatically.
@@ -46,23 +101,35 @@ See also: [`distributed_mcwf`](@ref), [`timeevolution.mcwf`](@ref)
 
 # Examples
 ```julia-repl
-julia> tspan = Array(t0:dt:t_max); nb_trajs = 100;
+julia> tspan = Array(t0:dt:t_max); Ntrajectories = 100;
 julia> fb = FockBasis(10); ψ0 = fockstate(fb,0); a = destroy(fb);
 julia> H = randoperator(fb); H = H + dagger(H); γ = 1.;
 julia> # 100 MCWF trajectories
-julia> t, trajs = multithreaded_mcwf(collect(t0:dt:t_max), ψ0, H, [sqrt(γ)*a],nb_trajs);
+julia> t, trajs = multithreaded_mcwf(collect(t0:dt:t_max), ψ0, H, [sqrt(γ)*a],Ntrajectories);
 ```
 """
-function multithreaded_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1, dm_output=false;
-        rates=nothing, fout=nothing, dmfout=nothing, Jdagger::Vector=dagger.(J),
+function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
-        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()), kwargs...)
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B}}
+
+    if Ntrajectories == 1
+        return timeevolution.mcwf(tspan,psi0,H,J;
+            rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    end
+
     # A progress bar is set up to be updated by the master thread
-    progress = Progress(nb_trajs);
+    progress = Progress(Ntrajectories);
     ProgressMeter.update!(progress, 0);
     function update_progressbar(n::Threads.Atomic{Int64})
-    if Threads.threadid() == 1  # If first thread: update progress bar
-        for i in 1:(n[]+1) ProgressMeter.next!(progress); end
+        if Threads.threadid() == 1  # If first thread: update progress bar
+            for i in 1:(n[]+1) ProgressMeter.next!(progress); end
             Threads.atomic_xchg!(n,0);
         else                    # Else: increment the number of pending updates.
             Threads.atomic_add!(n,1);
@@ -70,106 +137,30 @@ function multithreaded_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1, dm_output=fal
     end
     nupdates = Threads.Atomic{Int}(0);
 
-    # Set up random initialisation
-    gbs = H.basis_l;
-    #= old version with linear index
-    # Create a linear index over all possible configurations
-    #cartesian = CartesianIndices(Tuple([0:gbs.shape[i] for i in 1:length(gbs.shape)]));
-    =#
-    configs = collect(Tuple.(CartesianIndices(Tuple([0:gbs.shape[i]-1 for i in 1:length(gbs.shape)]))[:]));
-    configs = [rand(configs) for i in 1:nb_trajs];
-
-    config = configs[1]; # First configuration
-    if typeof(gbs) <: CompositeBasis
-        ψ0 = psi0 != nothing ? psi0 : ⨂([fockstate(gbs.bases[i],config[i]) for i in 1:length(gbs.shape)]);
-    else
-        ψ0 = psi0 != nothing ? psi0 : fockstate(gbs,config[1]);
+    # Pre-allocate an array for holding each MC simulation
+    out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
+    sols::Array{Tuple{Vector{Float64},Vector{out_type}},1} = fill((Vector{Float64}(),Vector{out_type}()),Ntrajectories);
+    # Multi-threaded for-loop over all MC trajectories.
+    Threads.@threads for i in 1:Ntrajectories
+        sols[i] = timeevolution.mcwf(tspan,psi0,H,J;
+            rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg, kwargs...);
+        #Core.println(sols[i][2][end].data)
+        # Updates progress bar if called from the main thread or adds a pending update otherwise
+        update_progressbar(nupdates);
     end
-    times, sol = timeevolution.mcwf(tspan,ψ0,H,J;
-        rates=rates,fout=fout,Jdagger=Jdagger,
-        display_beforeevent=display_beforeevent,
-        display_afterevent=display_afterevent,
-        kwargs...);
+    # Sets the progress bar to 100%
+    if progress.counter < Ntrajectories ProgressMeter.update!(progress, Ntrajectories); end;
 
-    if dm_output # Compute the density matrix at each time step
-        ρt = sol .⊗ dagger.(sol);
-        DmType = typeof(ρt);
-        # Pre-allocate an array for holding each thread's MC simulation
-        ρts::Array{DmType,1} = fill(0.0im .* ρt,Threads.nthreads());
-
-        # Multi-threaded for-loop over all MC trajectories. Trajectories are first
-        # summed thread-wise and then all the thread-summed trajectories are summed
-        # together and normalized.
-        Threads.@threads for i in 2:nb_trajs
-            config = configs[i]; # i-th configuration
-            if typeof(gbs) <: CompositeBasis
-                ψ0 = psi0 != nothing ? psi0 : ⨂([fockstate(gbs.bases[i],config[i]) for i in 1:length(gbs.shape)]);
-            else
-                ψ0 = psi0 != nothing ? psi0 : fockstate(gbs,config[1]);
-            end
-            times, ψt = timeevolution.mcwf(tspan,ψ0,H,J;
-                rates=rates,fout=nothing,Jdagger=Jdagger,
-                display_beforeevent=display_beforeevent,
-                display_afterevent=display_afterevent,
-                kwargs...);
-            # Updates progress bar if called from the main thread or adds a pending update otherwise
-            update_progressbar(nupdates);
-            @inbounds ρts[Threads.threadid()] += ψt .⊗ dagger.(ψt); # The single traj solution is added to the thread's solution
-        end
-        # Sets the progress bar to 100%
-        if progress.counter < nb_trajs ProgressMeter.update!(progress, nb_trajs); end;
-        # Average over all thread's mean trajectories:
-        for i in 1:Threads.nthreads()
-            @inbounds ρt += ρts[i];
-        end
-        ρt /= nb_trajs; # Normalize
-
-        return times, ρt;
-    else # Compute all trajs' states
-        # Pre-allocate an array for holding each thread's MC simulation
-        sols::Array{typeof(sol),1} = fill(typeof(sol)(),nb_trajs);
-        sols[1] = sol;
-        # Multi-threaded for-loop over all MC trajectories.
-        Threads.@threads for i in 2:nb_trajs
-            config = configs[i]; # i-th configuration
-            if typeof(gbs) <: CompositeBasis
-                ψ0 = psi0 != nothing ? psi0 : ⨂([fockstate(gbs.bases[i],config[i]) for i in 1:length(gbs.shape)]);
-            else
-                ψ0 = psi0 != nothing ? psi0 : fockstate(gbs,config[1]);
-            end
-            times, sol = timeevolution.mcwf(tspan,ψ0,H,J;
-                rates=rates,fout=fout,Jdagger=Jdagger,
-                display_beforeevent=display_beforeevent,
-                display_afterevent=display_afterevent,
-                alg=alg, kwargs...);
-            # Updates progress bar if called from the main thread or adds a pending update otherwise
-            update_progressbar(nupdates);
-            sols[i] = sol; # The single traj solution is added to the thread's solution
-        end
-        # Sets the progress bar to 100%
-        if progress.counter < nb_trajs ProgressMeter.update!(progress, nb_trajs); end;
-
-        if fout != nothing
-            obs = [mean([sols[i][tt] for i in 1:nb_trajs]) for tt in 1:length(times)];
-            return times, obs;
-        elseif dmfout != nothing
-            obs = Array{Any}(undef, length(times));
-            tmap!(obs,1:length(times)) do tt
-                dmfout(mean([sols[i][tt] ⊗ dagger(sols[i][tt]) for i in 1:nb_trajs]))
-            end
-            #obs = asyncmap((tt)->dmfout(mean([sols[i][tt] ⊗ dagger(sols[i][tt]) for i in 1:nb_trajs])), 1:length(times))
-            #obs = [dmfout(mean([sols[i][tt] ⊗ dagger(sols[i][tt]) for i in 1:nb_trajs])) for tt in 1:length(times)];
-            return times, obs;
-        else
-            return times, sols;
-        end
-    end
+    return sols;
 end;
 
 """
-    distributed_mcwf(tspan, psi0, H, J, nb_trajs; <keyword arguments>)
+    distributed_mcwf(tspan, psi0, H, J; Ntrajectories, <keyword arguments>)
 
-Integrate `nb_trajs` MCWF trajectories parallely on `Distributed.nprocs()` processes.
+Integrate `Ntrajectories` MCWF trajectories parallely on `Distributed.nprocs()` processes.
 Arguments are passed internally to `QuantumOptics.timeevolution.mcwf`.
 
 # Arguments
@@ -180,7 +171,7 @@ with kets uniformly drawn from the Hilbert space.
 * `H`: Arbitrary Operator specifying the Hamiltonian.
 * `J`: Vector containing all jump operators which can be of any arbitrary
 operator type.
-* `nb_trajs=1`: Number of trajectories to be averaged.
+* `Ntrajectories=1`: Number of trajectories to be averaged.
 * `rates=ones()`: Vector of decay rates.
 * `fout`: If given, this function `fout(t, psi)` is called every time an
 output should be displayed.
@@ -196,14 +187,14 @@ See also: [`multithreaded_mcwf`](@ref), [`timeevolution.mcwf`](@ref)
 
 # Examples
 ```julia-repl
-julia> tspan = Array(t0:dt:t_max); nb_trajs = 100;
+julia> tspan = Array(t0:dt:t_max); Ntrajectories = 100;
 julia> fb = FockBasis(10); ψ0 = fockstate(fb,0); a = destroy(fb);
 julia> H = randoperator(fb); H = H + dagger(H); γ = 1.;
 julia> # 100 MCWF trajectories
-julia> t, trajs = distributed_mcwf(Array(t0:dt:t_max), ψ0, H, [sqrt(γ)*a],nb_trajs);
+julia> t, trajs = distributed_mcwf(Array(t0:dt:t_max), ψ0, H, [sqrt(γ)*a],Ntrajectories);
 ```
 """
-function distributed_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1;
+function distributed_mcwf(tspan, psi0, H, J::Vector; Ntrajectories=1,
         additional_data::Union{Dict{String,T},Missing}=missing,
         fpath::String="Persistent_current/Datafiles/"*safe_save_name("Persistent_current/Datafiles/", "data")*".jld2",
         rates=nothing, fout=nothing, dmfout=nothing, Jdagger::Vector=dagger.(J),
@@ -217,7 +208,7 @@ function distributed_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1;
     #cartesian = CartesianIndices(Tuple([0:gbs.shape[i] for i in 1:length(gbs.shape)]));
     =#
     configs = collect(Tuple.(CartesianIndices(Tuple([0:gbs.shape[i] for i in 1:length(gbs.shape)]))[:]));
-    configs = [rand(configs) for i in 1:nb_trajs];
+    configs = [rand(configs) for i in 1:Ntrajectories];
 
     # Create a remote channel from where trajectories are read out by the saver
     remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
@@ -227,11 +218,11 @@ function distributed_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1;
     # Create a task fetched by the first available worker that retrieves trajs
     # from the remote channel and writes them to disk. A progress bar is set up
     # as well.
-    saver = @async launch_saver(fpath, remch, nb_trajs; additional_data=additional_data);
+    saver = @async launch_saver(fpath, remch, Ntrajectories; additional_data=additional_data);
     # Multi-processed for-loop over all MC trajectories. @async feeds workers()
     # with jobs from the local process and returns instantly. Jobs consist in
     # computing a trajectory and pipe it to the remote channel remch.
-    tsk = @async pmap(wp, 1:nb_trajs, batch_size=cld(nb_trajs,length(wp.workers))) do i
+    tsk = @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
         config = configs[i]; # i-th configuration
         ψ0 = psi0 != nothing ? psi0 : ⨂([fockstate(ghs.bases[i],config[i]) for i in 1:length(gbs.shape)]);
         sol = timeevolution.mcwf(tspan,ψ0,H,J;
@@ -252,12 +243,12 @@ function distributed_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1;
 
     # Further processing of the MCWF trajectories.
     if fout != nothing
-        obs = [mean([sols[i][tt] for i in 1:nb_trajs]) for tt in 1:length(times)];
+        obs = [mean([sols[i][tt] for i in 1:Ntrajectories]) for tt in 1:length(times)];
         return tspan, obs;
     elseif dmfout != nothing
         obs = Array{Any}(undef, length(times));
         tmap!(obs,1:length(times)) do tt
-            dmfout(mean([sols[i][tt] ⊗ dagger(sols[i][tt]) for i in 1:nb_trajs]))
+            dmfout(mean([sols[i][tt] ⊗ dagger(sols[i][tt]) for i in 1:Ntrajectories]))
         end
         return tspan, obs;
     else
@@ -266,14 +257,14 @@ function distributed_mcwf(tspan, psi0, H, J::Vector, nb_trajs=1;
 end;
 
 #function to be called by the main worker that saves trajectories to a file.
-function launch_saver(fpath::String, readout_ch::RemoteChannel{Channel{T1}}, nb_trajs::Int;
+function launch_saver(fpath::String, readout_ch::RemoteChannel{Channel{T1}}, Ntrajectories::Int;
                       additional_data::Union{Dict{String,T2},Missing}=missing) where {T1, T2}
     println("Saver launched")
     println("Saving data to ",fpath)
     # Set up a progress bar
-    progress = Progress(nb_trajs);
+    progress = Progress(Ntrajectories);
     ProgressMeter.update!(progress, 0);
-    sols::Array{Any,1} = Array{Any,1}(undef,nb_trajs);
+    sols::Array{Any,1} = Array{Any,1}(undef,Ntrajectories);
 
     # Current trajectory index
     currtraj::Int = 1;
@@ -284,7 +275,7 @@ function launch_saver(fpath::String, readout_ch::RemoteChannel{Channel{T1}}, nb_
                 file[key] = val;
             end
         end
-        while currtraj <= nb_trajs
+        while currtraj <= Ntrajectories
             # Retrieve a queued traj
             times, sols[currtraj] = take!(readout_ch);
             if currtraj == 1 file["t"] = times; end
@@ -295,7 +286,7 @@ function launch_saver(fpath::String, readout_ch::RemoteChannel{Channel{T1}}, nb_
             currtraj += 1;
         end
         # Set progress bar to 100%
-        if progress.counter < nb_trajs ProgressMeter.update!(progress, nb_trajs); end;
+        if progress.counter < Ntrajectories ProgressMeter.update!(progress, Ntrajectories); end;
     end
     return sols;
 end;
