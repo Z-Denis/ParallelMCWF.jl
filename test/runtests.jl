@@ -25,7 +25,7 @@ using QuantumOptics
     @test Ψt[1] == Ψt2
 end
 
-#=
+
 Δ = 1.; F = 2.; γ = 1.;
 b = FockBasis(10);
 N = number(b);
@@ -42,7 +42,7 @@ sol[1] == sol[2]
 sol = pmcwf(T, Ψ₀, H, J;Ntrajectories=2, parallel_type=:none, progressbar=true, reltol=1e-7, seed=UInt(1))
 params = Dict("pi" => π)
 pmcwf(T, Ψ₀, H, J;Ntrajectories=3000, parallel_type=:pmap, progressbar=true, return_data=true,
-    save_data=true, additional_data=params, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))
+    save_data=false, additional_data=params, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))
 multithreaded_mcwf(T, Ψ₀, H, J, 2; seed=UInt(1), fout=(t,x)->expect(N,x)/norm(x)^2,reltol=1e-7)
 file = jldopen("E:/Documents/Julia scripts/Tests/Data/test13.jld2","r")
 file["trajs/2274"]
@@ -131,4 +131,31 @@ function tmap!(f, dst, src)
         dst[i] = f(src[i]);
     end
 end;
-=#
+
+
+v = collect(1:4)
+
+remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
+wp = CachingPool(workers());
+x = [0];
+acc = @async begin
+    for i in 1:length(v)
+        x[1] += take!(remch);
+    end
+    nothing
+end
+tsk = @async pmap(wp, 1:4, batch_size=cld(length(v),length(wp.workers))) do i
+    put!(remch, i);
+    nothing
+end
+fetch(tsk);
+fetch(acc)
+
+x[]
+
+kets = pmcwf(T, Ψ₀, H, J;Ntrajectories=300, parallel_type=:threads, progressbar=true, return_data=true,
+    save_data=false, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))[2]
+
+kets_to_dm([kets[i][end] for i in 1:length(kets)];parallel_type=:threads)
+kets_to_obs(N,[kets[i][end] for i in 1:length(kets)];parallel_type=:pmap)
+kets
