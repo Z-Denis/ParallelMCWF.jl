@@ -67,11 +67,12 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     save_data && @assert !isfile(fpath) "ERROR: "*fpath*" already a file: Choose a free savefile name"
 
     if parallel_type == :none || Ntrajectories == 1
+        # TO DO: seed argument not supported
         return serial_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
@@ -110,7 +111,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = false,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        seed=rand(UInt), rates::DecayRates=nothing,
+        rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -136,7 +137,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     end
     for i in 1:Ntrajectories
         sol = timeevolution.mcwf(tspan,psi0,H,J;
-            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,kwargs...);
