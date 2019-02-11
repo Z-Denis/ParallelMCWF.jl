@@ -105,5 +105,5 @@ function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symb
         clear!(wp);
     end
 
-    return obs / length(kets);
+    return obs[] / length(kets);
 end;
