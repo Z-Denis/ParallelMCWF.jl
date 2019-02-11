@@ -3,7 +3,7 @@ using Test
 using QuantumOptics
 
 @testset "ParallelMCWF.jl" begin
-    # Write your own tests here.
+    # Model: driven-dissipative harmonic oscillator
     Δ = 1.; F = 2.; γ = 1.;
     b = FockBasis(10);
     N = number(b);
@@ -11,152 +11,43 @@ using QuantumOptics
     H = -Δ*N + F*(a + dagger(a));
     J = [sqrt(γ) * a];
     T = Float64[0.:0.1:10.;]
+	Ntrajectories = 500;
 
     # Initial conditions
     Ψ₀ = fockstate(b,0);
 
-    # Test multithreaded_mcwf
-    tout, Ψt = multithreaded_mcwf(T, Ψ₀, H, J, 100; seed=UInt(1), reltol=1e-7);
-    tout2, Ψt2 = multithreaded_mcwf(T, Ψ₀, H, J, 100; seed=UInt(1), reltol=1e-7);
-    @test Ψt == Ψt2
+	t, ρ = timeevolution.master(T,Ψ₀,H,J)
 
-    tout, Ψt = multithreaded_mcwf(T, Ψ₀, H, J, 2; seed=UInt(1), reltol=1e-7)
-    tout, Ψt2 = timeevolution.mcwf(T, Ψ₀, H, J; seed=UInt(1), reltol=1e-7)
-    @test Ψt[1] == Ψt2
+	# Test pmcwf and kets_to_dm
+	t, ψ_none = pmcwf(T, Ψ₀, H, [sqrt(γ)*a]; Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:none)
+	ρ_none = kets_to_dm([ψ_none[i][end] for i in 1:length(ψ_none)];parallel_type=:none)
+	err_none =  tracedistance(ρ[end], ρ_none)
+	@test err_none < 1e-2
+
+	t, ψ_pmap = pmcwf(T, Ψ₀, H, [sqrt(γ)*a]; Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:pmap)
+	ρ_pmap = kets_to_dm([ψ_pmap[i][end] for i in 1:length(ψ_pmap)];parallel_type=:none)
+	err_pmap =  tracedistance(ρ[end], ρ_pmap)
+	@test err_pmap < 1e-2
+
+	t, ψ_threads = pmcwf(T, Ψ₀, H, [sqrt(γ)*a]; Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:threads)
+	ρ_threads = kets_to_dm([ψ_threads[i][end] for i in 1:length(ψ_threads)];parallel_type=:none)
+	err_threads =  tracedistance(ρ[end], ρ_threads)
+	@test err_threads < 1e-2
+
+	# Test kets_to_obs
+	O = randoperator(b); O = O*dagger(O) + one(b);
+	O_ref = expect(O,ρ[end])
+
+	ψ = [ψ_none[i][end] for i in 1:length(ψ_none)];
+	O_none = kets_to_obs(O,ψ;parallel_type=:none)
+	@test abs((O_none - O_ref)/O_ref) < 1e-2
+
+	O_pmap = kets_to_obs(O,ψ;parallel_type=:pmap)
+	@test abs((O_pmap - O_ref)/O_ref) < 1e-2
+
+	O_threads = kets_to_obs(O,ψ;parallel_type=:threads)
+	@test abs((O_pmap - O_ref)/O_ref) < 1e-2
+
+	# TO DO: add tests on extended models
+	# TO DO: test functions of trajs_IO.jl
 end
-
-#=
-Δ = 1.; F = 2.; γ = 1.;
-b = FockBasis(10);
-N = number(b);
-a = destroy(b);
-H = -Δ*N + F*(a + dagger(a));
-J = [sqrt(γ) * a];
-T = collect(0:10)
-
-# Initial conditions
-Ψ₀ = fockstate(b,0);
-sol = pmcwf(T, Ψ₀, H, J;Ntrajectories=3, parallel_type=:threads, seed=UInt(1), reltol=1e-7)
-sol = pmcwf(T, Ψ₀, H, J;Ntrajectories=2, parallel_type=:threads, reltol=1e-7, seed=UInt(1))
-sol[1] == sol[2]
-sol = pmcwf(T, Ψ₀, H, J;Ntrajectories=2, parallel_type=:none, progressbar=true, reltol=1e-7, seed=UInt(1))
-params = Dict("pi" => π)
-pmcwf(T, Ψ₀, H, J;Ntrajectories=3000, parallel_type=:pmap, progressbar=true, return_data=true,
-    save_data=false, additional_data=params, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))
-multithreaded_mcwf(T, Ψ₀, H, J, 2; seed=UInt(1), fout=(t,x)->expect(N,x)/norm(x)^2,reltol=1e-7)
-file = jldopen("E:/Documents/Julia scripts/Tests/Data/test13.jld2","r")
-file["trajs/2274"]
-close(file)
-tout, Ψt = timeevolution.mcwf(T, Ψ₀, H, J; seed=UInt(1), reltol=1e-7)
-out_type = eltype(timeevolution.mcwf(T, Ψ₀, H, J; seed=UInt(1), reltol=1e-7)[2])
-typeof(timeevolution.mcwf(T, Ψ₀, H, J; seed=UInt(1), reltol=1e-7))
-sol = (Vector{Float64}(),Vector{out_type}())
-multithreaded_mcwf(T, Ψ₀, H, J, 2; seed=UInt(1), reltol=1e-7)
-using ProgressMeter
-progress = Progress(10);
-for i in 1:10
-    ProgressMeter.next!(progress);
-end
-
-
-function read_saves(path::String, fname::String; trajrange=nothing, timerange=nothing)
-    times = nothing
-    sols = nothing;
-    jldopen(path * fname * ".jld2", "r") do file
-        fulltrajrange = 1:length(keys(file["trajs"]));
-        if trajrange == nothing
-            trajrange = fulltrajrange;
-        else
-            @assert trajrange[end] <= fulltrajrange[end] "The trajrange argument limits must not overpass those of the saved data"
-        end
-        fulltimerange = 1:length(file["t"]);
-        if timerange == nothing
-            timerange = fulltimerange;
-        else
-            @assert timerange[end] <= fulltimerange[end] "The timerange argument limits must not overpass those of the saved data"
-        end
-        times = file["t"][timerange]
-        sols = [file["trajs/" * string(i)][t] for t in timerange, i in trajrange];
-    end
-    return times, sols
-end
-
-function split_last_integer(s::String)
-    num::String = ""
-    for c::Char in s
-        try
-            n = parse(Int, c);
-            num *= c;
-        catch
-            num="";
-        end
-    end
-    return SubString(s,1,length(s)-length(num)), num;
-end;
-function safe_save_name(path::String, fname::String)
-    @assert ispath(path) "ERROR: accessing "*path*": No such file or directory"
-    while isfile(path * fname * ".jld2")
-        nfname::String, num::String = split_last_integer(fname);
-        nfname *= num == "" ? "_1" : string(parse(Int, num)+1);
-        fname = nfname;
-    end
-    return fname;
-end;
-
-"""
-    tmap!(function, destination, collection)
-Multithreaded version of [`map!`](@ref).
-
-See also: [`map!`](@ref)
-
-# Examples
-```julia-repl
-julia> src = collect(1:15);
-julia> dst = similar(src);
-julia> @btime map!(dst,src) do x
-           Libc.systemsleep(1)
-           x
-       end
-  15.039 s (0 allocations: 0 bytes)
-julia> @btime tmap!(dst,src) do x
-           Libc.systemsleep(1)
-           x
-       end
-  3.006 s (1 allocation: 32 bytes)
-```
-"""
-function tmap!(f, dst, src)
-    @assert length(dst) == length(src) "Source and destination containers must have same lengths"
-    Threads.@threads for i in eachindex(src)
-        dst[i] = f(src[i]);
-    end
-end;
-
-
-v = collect(1:4)
-
-remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
-wp = CachingPool(workers());
-x = [0];
-acc = @async begin
-    for i in 1:length(v)
-        x[1] += take!(remch);
-    end
-    nothing
-end
-tsk = @async pmap(wp, 1:4, batch_size=cld(length(v),length(wp.workers))) do i
-    put!(remch, i);
-    nothing
-end
-fetch(tsk);
-fetch(acc)
-
-x[]
-
-kets = pmcwf(T, Ψ₀, H, J;Ntrajectories=300, parallel_type=:pmap, progressbar=true, return_data=true,
-    save_data=false, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))[2]
-
-kets_to_dm([kets[i][end] for i in 1:length(kets)];parallel_type=:pmap)
-kets_to_obs(N,[kets[i][end] for i in 1:length(kets)];parallel_type=:pmap)
-kets
-=#

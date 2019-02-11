@@ -36,10 +36,10 @@ function load_trajs(fpath::String; trajrange::Union{UnitRange{T},Missing}=missin
 end;
 
 """
-    split_last_integer(s)
+    ParallelMCWF.split_last_integer(s)
 
-For any input string "string_i", where `i` is an integer, returns ("string_", i).
-Only used by [`save_trajs`](@ref)
+For any input string `"string_i"`, where `i` is an integer, return `("string_", i)`.
+Used internally by [`ParallelMCWF.safe_fpaths`](@ref)
 """
 function split_last_integer(s::String)
     num::String = ""
@@ -52,6 +52,25 @@ function split_last_integer(s::String)
         end
     end
     return SubString(s,1,length(s)-length(num)), num;
+end;
+"""
+    ParallelMCWF.safe_fpath(fpath)
+
+For any input file path `"some/path/file.extension"`, check whether the file exists.
+If so return a free file path by appending or incrementing a number at the end
+of the original filename. Otherwise return `fpath`.
+Used internally by [`save_trajs`](@ref)
+"""
+function safe_fpath(fpath::String)
+    path = dirname(fpath);
+    @assert isdir(path) "ERROR: accessing "*path*": No such directory"
+	fpath, ext = splitext(fpath);
+    while isfile(fpath*ext)
+        nfpath::String, num::String = split_last_integer(fpath);
+        nfpath *= num == "" ? "_1" : string(parse(Int, num)+1);
+        fpath = nfpath;
+    end
+    return fpath*ext;
 end;
 
 """
@@ -71,13 +90,12 @@ See also: [`load_trajs`](@ref)
 """
 function save_trajs(fpath::String, res::Union{Tuple{Vector{T1},Vector{T2}},Missing}=missing;
         additional_data::Union{Dict{String,T3},Missing}=missing) where {T1<:Real,T2,T3}
-    if isdir(splitdir(fpath)[1])
-        while isfile(fpath)
-            nfpath::String, num::String = split_last_integer(fpath);
-            nfpath *= num == "" ? "_1" : string(parse(Int, num)+1);
-            fpath = nfpath;
-        end
-        jldopen(fpath, "a+") do file
+    if isdir(dirname(fpath))
+		if isfile(fpath)
+			nfpath = safe_fpath(fpath);
+			@warn "$(basename(fpath)) already exists at $(dirname(fpath)).\nSaving to $nfpath..."
+		end
+        jldopen(nfpath, "a+") do file
             if !ismissing(res)
                 times, trajs = res;
                 file["t"] = times;
@@ -92,8 +110,8 @@ function save_trajs(fpath::String, res::Union{Tuple{Vector{T1},Vector{T2}},Missi
             end
         end
     else
-        path = splitdir(fpath)[1];
-        fname = splitdir(fpath)[2]
+        path = dirname(fpath);
+        fname = basename(fpath);
         printstyled("ERROR: accessing "*path*": No such file or directory\n",color=:light_red)
         println("Please type a valid path (like \"my/valid/path/\") or enter \"exit\"");
         npath = readline(stdin);
