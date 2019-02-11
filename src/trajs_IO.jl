@@ -36,10 +36,10 @@ function load_trajs(fpath::String; trajrange::Union{UnitRange{T},Missing}=missin
 end;
 
 """
-    split_last_integer(s)
+    ParallelMCWF.split_last_integer(s)
 
-For any input string "string_i", where `i` is an integer, returns ("string_", i).
-Only used by [`save_trajs`](@ref)
+For any input string `"string_i"`, where `i` is an integer, return `("string_", i)`.
+Used internally by [`ParallelMCWF.safe_fpaths`](@ref)
 """
 function split_last_integer(s::String)
     num::String = ""
@@ -53,6 +53,14 @@ function split_last_integer(s::String)
     end
     return SubString(s,1,length(s)-length(num)), num;
 end;
+"""
+    ParallelMCWF.safe_fpath(fpath)
+
+For any input file path `"some/path/file.extension"`, check whether the file exists.
+If so return a free file path by appending or incrementing a number at the end
+of the original filename. Otherwise return `fpath`.
+Used internally by [`save_trajs`](@ref)
+"""
 function safe_fpath(fpath::String)
     path = dirname(fpath);
     @assert isdir(path) "ERROR: accessing "*path*": No such directory"
