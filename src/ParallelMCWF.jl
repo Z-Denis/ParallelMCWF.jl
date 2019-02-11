@@ -8,11 +8,6 @@ Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@
 module ParallelMCWF
 
 using Distributed, Base.Threads
-if !isdefined(ParallelMCWF,:WORKERS)
-    const WORKERS = workers();
-elseif WORKERS !== workers()
-    @warn "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
-end
 @info "ParallelMCWF loaded with $(nthreads()) threads."
 @info "ParallelMCWF loaded with $(nworkers()) workers."
 @info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
