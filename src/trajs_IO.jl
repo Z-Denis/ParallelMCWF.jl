@@ -12,7 +12,7 @@ file must exist.
 See also: [`save_trajs`](@ref)
 """
 function load_trajs(fpath::String; trajrange::Union{UnitRange{T},Missing}=missing,
-        timerange::Union{UnitRange{T},Missing}=nothing) where T<:Integer
+        timerange::Union{UnitRange{T},Missing}=missing) where T<:Integer
     @assert isfile(fpath) "ERROR: accessing "*fpath*": No such file or directory"
     times = nothing
     sols = nothing;

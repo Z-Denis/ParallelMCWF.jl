@@ -25,7 +25,7 @@ using QuantumOptics
     @test Ψt[1] == Ψt2
 end
 
-
+#=
 Δ = 1.; F = 2.; γ = 1.;
 b = FockBasis(10);
 N = number(b);
@@ -153,9 +153,10 @@ fetch(acc)
 
 x[]
 
-kets = pmcwf(T, Ψ₀, H, J;Ntrajectories=300, parallel_type=:threads, progressbar=true, return_data=true,
+kets = pmcwf(T, Ψ₀, H, J;Ntrajectories=300, parallel_type=:pmap, progressbar=true, return_data=true,
     save_data=false, fpath="E:/Documents/Julia scripts/Tests/Data/test14.jld2", reltol=1e-7, seed=UInt(1))[2]
 
-kets_to_dm([kets[i][end] for i in 1:length(kets)];parallel_type=:threads)
+kets_to_dm([kets[i][end] for i in 1:length(kets)];parallel_type=:pmap)
 kets_to_obs(N,[kets[i][end] for i in 1:length(kets)];parallel_type=:pmap)
 kets
+=#

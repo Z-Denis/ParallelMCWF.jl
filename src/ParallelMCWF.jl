@@ -1,5 +1,9 @@
 """
 Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@ref).
+
+`ParallelMCWF` exports functions:
+[`pmcwf`](@ref), [`load_trajs`](@ref), [`save_trajs`](@ref),
+[`kets_to_dm`](@ref), [`kets_to_obs`](@ref)
 """
 module ParallelMCWF
 

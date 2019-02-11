@@ -38,11 +38,11 @@ See also: [`timeevolution.mcwf`](@ref)
 
 # Examples
 ```julia-repl
-julia> tspan = Array(t0:dt:t_max);
+julia> tspan = collect(t0:dt:t_max);
 julia> fb = FockBasis(10); ψ0 = fockstate(fb,0); a = destroy(fb);
 julia> H = randoperator(fb); H = H + dagger(H); γ = 1.;
 julia> # 100 MCWF trajectories
-julia> t, trajs = pmcwf(Array(t0:dt:t_max), ψ0, H, [sqrt(γ)*a];
+julia> t, trajs = pmcwf(tspan, ψ0, H, [sqrt(γ)*a];
                         Ntrajectories=100, parallel_type=:pmap);
 ```
 """
