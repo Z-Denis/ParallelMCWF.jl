@@ -13,6 +13,10 @@ Simple package providing parallelised versions of [QuantumOptics.jl](https://git
 
 ### `pmcwf`
 ```julia
+using Distributed
+# Get 10 processes
+if nprocs() < 10 addprocs(10-nprocs()); end
+using ParallelMCWF, QuantumOptics
 tspan = collect(0:10);
 fb = FockBasis(10); ψ0 = fockstate(fb,0); a = destroy(fb);
 H = randoperator(fb); H = H + dagger(H); γ = 1.;
