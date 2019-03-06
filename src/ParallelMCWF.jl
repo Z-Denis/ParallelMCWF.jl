@@ -8,9 +8,11 @@ Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@
 module ParallelMCWF
 
 using Distributed, Base.Threads
-@info "ParallelMCWF loaded with $(nthreads()) threads."
-@info "ParallelMCWF loaded with $(nworkers()) workers."
-@info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
+if myid() == 1
+    @info "ParallelMCWF loaded with $(nthreads()) threads."
+    @info "ParallelMCWF loaded with $(nworkers()) workers."
+    @info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
+end
 using ProgressMeter, JLD2
 import OrdinaryDiffEq
 using QuantumOptics.bases, QuantumOptics.states, QuantumOptics.operators
