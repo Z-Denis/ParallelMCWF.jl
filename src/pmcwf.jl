@@ -52,7 +52,7 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = false,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        seed=rand(UInt), rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -67,18 +67,16 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     save_data && @assert !isfile(fpath) "ERROR: "*fpath*" already a file: Choose a free savefile name"
 
     if parallel_type == :none || Ntrajectories == 1
-        # TO DO: seed argument not supported
         return serial_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=nothing,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
     elseif parallel_type == :threads
-        # TO DO: seed argument not supported
         # TO DO: only save_data not totally supported. Could use less RAM by
         # writting trajectories directly to disk but would probably require
         # some locking or some parallel process.
@@ -86,19 +84,18 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=nothing,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
     elseif parallel_type == :pmap
-        # TO DO: seed argument not supported
         # TO DO: add batch_size as an option
         return distributed_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=nothing,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
@@ -115,7 +112,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = false,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -140,11 +137,19 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         ProgressMeter.update!(progress, 0);
     end
     for i in 1:Ntrajectories
-        sol = timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg,kwargs...);
+        if seed == nothing
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg,kwargs...);
+        else
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg,kwargs...);
+        end
         save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         progressbar ? ProgressMeter.next!(progress) : nothing;
@@ -158,7 +163,7 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = true,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -195,11 +200,19 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     end
     # Multi-threaded for-loop over all MC trajectories.
     Threads.@threads for i in 1:Ntrajectories
-        sol = timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg, kwargs...);
+        if seed == nothing
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg, kwargs...);
+        else
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg, kwargs...);
+        end
         #save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         # Updates progress bar if called from the main thread or adds a pending update otherwise
@@ -225,7 +238,7 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = true,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -246,11 +259,20 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     # with jobs from the local process and returns instantly. Jobs consist in
     # computing a trajectory and pipe it to the remote channel remch.
     tsk = @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
-        put!(remch, timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg, kwargs...));
+        put!(remch,begin
+                        if seed == nothing
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        else
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        end);
         nothing
     end
     fetch(tsk);
