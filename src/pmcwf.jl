@@ -58,7 +58,7 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
         kwargs...) where {B<:Basis,T<:Ket{B},T2}
 
-    valptypes = [:none, :threads, :pmap];
+    valptypes = [:none, :threads, :pmap, :parfor, :split_threads];
     @assert parallel_type in valptypes "Invalid parallel type. Type :$parallel_type not available.\n"*
                                        "Available types are: "*reduce(*,[":$t " for t in valptypes])
     @assert return_data || save_data "pmcwf outputs nothing"
@@ -103,6 +103,10 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
+    elseif parallel_type == :parfor
+        # TO DO
+    elseif parallel_type == :split_threads
+        # TO DO
     end
 end
 
@@ -187,7 +191,7 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     if return_data
         # Pre-allocate an array for holding each MC simulation
         out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
-        sols::Array{Vector{out_type},1} = fill(Vector{out_type}(),Ntrajectories);
+        sols::Array{Vector{out_type},1} = [Vector{out_type}() for i in 1:Ntrajectories];
     end
     # Multi-threaded for-loop over all MC trajectories.
     Threads.@threads for i in 1:Ntrajectories
