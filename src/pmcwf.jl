@@ -272,7 +272,8 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
                             display_beforeevent=display_beforeevent,
                             display_afterevent=display_afterevent,
                             alg=alg, kwargs...);
-                        end);
+                        end
+                    end);
         nothing
     end
     fetch(tsk);
