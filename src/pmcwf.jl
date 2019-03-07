@@ -22,7 +22,7 @@ If `return_data=false`, less RAM is used (except for `parallel_type=:threads`).
 Directory must pre-exist, the savefile is created.
 * `additional_data=missing`: If given a `Dict`, entries are added to the
 savefile.
-* `seed=rand(UInt)`: Currently not supported except for `parallel_type=:none`.
+* `seed=rand(UInt)`: seed for each trajectory's random number generator.
 * `rates=ones()`: Vector of decay rates.
 * `fout`: If given, this function `fout(t, psi)` is called every time an
 output should be displayed. ATTENTION: The state `psi` is neither
@@ -77,7 +77,7 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             alg=alg,
             kwargs...);
     elseif parallel_type == :threads
-        # TO DO: only save_data not totally supported. Could use less RAM by
+        # TO DO: save_data-only not totally supported. Could use less RAM by
         # writting trajectories directly to disk but would probably require
         # some locking or some parallel process.
         return multithreaded_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
