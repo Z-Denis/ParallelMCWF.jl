@@ -2,10 +2,10 @@
 Simple package providing parallelised versions of [QuantumOptics.jl](https://github.com/qojulia/QuantumOptics.jl)'s `timeevolution.mcwf` Monte-Carlo wave-function algorithm.
 
 ### Features
-- Setup parallel Monte Carlo simulations based on `timeevolution.mcwf`. Both multithreading (`Threads.@threads`) and distributed computing (`pmap`) are supported.
+- Setup parallel Monte Carlo simulations based on `timeevolution.mcwf`. Multithreading (`Threads.@threads for`), distributed computing (both `pmap` and `@distributed for`) and multithreading on split processes is supported.
 - Support progress bar. Only the default [ProgressMeter](https://github.com/timholy/ProgressMeter.jl) progress bar is currently supported.
 - Support memory-efficient real-time saving of Monte Carlo trajectories.
-- Build density matrices parallely from arrays of kets with support for: multithreading (`Threads.@threads for`), distributed computing (both `pmap` and `@distributed for`) and multithreading on split processes.
+- Build density matrices parallely from arrays of kets with support for both multithreading (`Threads.@threads`) and distributed computing (`pmap`).
 - Average operators parallely over arrays of kets with support for both multithreading (`Threads.@threads`) and distributed computing (`pmap`).
 - Save to and load from disk MCWF trajectories specifying the range for both the trajectories and the times.
 
