@@ -13,12 +13,16 @@ Simple package providing parallelised versions of [QuantumOptics.jl](https://git
 
 ### `pmcwf`
 ```julia
+using Distributed
+# Get 10 processes
+if nprocs() < 10 addprocs(10-nprocs()); end
+using ParallelMCWF, QuantumOptics
 tspan = collect(0:10);
 fb = FockBasis(10); ψ0 = fockstate(fb,0); a = destroy(fb);
 H = randoperator(fb); H = H + dagger(H); γ = 1.;
 # 3000 MCWF trajectories
 t, trajs = pmcwf(tspan, ψ0, H, [sqrt(γ)*a]; Ntrajectories=3000, progressbar=true,
-		parallel_type=:pmap, return_data=true, save_data=true,fpath="/some/valid/path/filename.jld2");
+		parallel_type=:pmap, return_data=true, save_data=true, fpath="/some/valid/path/filename.jld2");
 ```
 ```julia-repl
 Saving data to /some/valid/path/filename.jld2

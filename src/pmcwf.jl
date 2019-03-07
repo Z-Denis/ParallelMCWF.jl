@@ -52,13 +52,13 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = false,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        seed=rand(UInt), rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
         kwargs...) where {B<:Basis,T<:Ket{B},T2}
 
-    valptypes = [:none, :threads, :pmap];
+    valptypes = [:none, :threads, :pmap, :parfor, :split_threads];
     @assert parallel_type in valptypes "Invalid parallel type. Type :$parallel_type not available.\n"*
                                        "Available types are: "*reduce(*,[":$t " for t in valptypes])
     @assert return_data || save_data "pmcwf outputs nothing"
@@ -67,18 +67,16 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     save_data && @assert !isfile(fpath) "ERROR: "*fpath*" already a file: Choose a free savefile name"
 
     if parallel_type == :none || Ntrajectories == 1
-        # TO DO: seed argument not supported
         return serial_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
     elseif parallel_type == :threads
-        # TO DO: seed argument not supported
         # TO DO: only save_data not totally supported. Could use less RAM by
         # writting trajectories directly to disk but would probably require
         # some locking or some parallel process.
@@ -86,19 +84,39 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
     elseif parallel_type == :pmap
-        # TO DO: seed argument not supported
         # TO DO: add batch_size as an option
+        return pmap_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            progressbar=progressbar,
+            return_data=return_data,save_data=save_data,
+            fpath=fpath,additional_data=additional_data,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    elseif parallel_type == :parfor
         return distributed_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
             progressbar=progressbar,
             return_data=return_data,save_data=save_data,
             fpath=fpath,additional_data=additional_data,
-            rates=rates,fout=fout,Jdagger=Jdagger,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
+    elseif parallel_type == :split_threads
+        # TO DO: add batch_size as an option
+        return split_threads_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            progressbar=progressbar,
+            return_data=return_data,save_data=save_data,
+            fpath=fpath,additional_data=additional_data,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
             display_beforeevent=display_beforeevent,
             display_afterevent=display_afterevent,
             alg=alg,
@@ -111,7 +129,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = false,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -136,11 +154,19 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         ProgressMeter.update!(progress, 0);
     end
     for i in 1:Ntrajectories
-        sol = timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg,kwargs...);
+        if seed == nothing
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg,kwargs...);
+        else
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg,kwargs...);
+        end
         save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         progressbar ? ProgressMeter.next!(progress) : nothing;
@@ -154,7 +180,7 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         return_data::Bool = true, save_data::Bool = true,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -187,15 +213,23 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     if return_data
         # Pre-allocate an array for holding each MC simulation
         out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
-        sols::Array{Vector{out_type},1} = fill(Vector{out_type}(),Ntrajectories);
+        sols::Array{Vector{out_type},1} = [Vector{out_type}() for i in 1:Ntrajectories];
     end
     # Multi-threaded for-loop over all MC trajectories.
     Threads.@threads for i in 1:Ntrajectories
-        sol = timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg, kwargs...);
+        if seed == nothing
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg, kwargs...);
+        else
+            sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                display_beforeevent=display_beforeevent,
+                display_afterevent=display_afterevent,
+                alg=alg, kwargs...);
+        end
         #save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         # Updates progress bar if called from the main thread or adds a pending update otherwise
@@ -216,12 +250,12 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     return return_data ? (tspan, sols) : nothing;
 end;
 
-function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         Ntrajectories=1, progressbar::Bool = true,
         return_data::Bool = true, save_data::Bool = true,
         fpath::Union{String,Missing}=missing,
         additional_data::Union{Dict{String,T2},Missing}=missing,
-        rates::DecayRates=nothing,
+        seed=nothing, rates::DecayRates=nothing,
         fout=nothing, Jdagger::Vector=dagger.(J),
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
@@ -241,15 +275,136 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     # Multi-processed for-loop over all MC trajectories. @async feeds workers()
     # with jobs from the local process and returns instantly. Jobs consist in
     # computing a trajectory and pipe it to the remote channel remch.
-    tsk = @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
-        put!(remch, timeevolution.mcwf(tspan,psi0,H,J;
-            rates=rates,fout=fout,Jdagger=Jdagger,
-            display_beforeevent=display_beforeevent,
-            display_afterevent=display_afterevent,
-            alg=alg, kwargs...));
+    @sync @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
+        put!(remch,begin
+                        if seed == nothing
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        else
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        end
+                    end);
         nothing
     end
-    fetch(tsk);
+    # Once saver has consumed all queued trajectories produced by all workers, an
+    # array of MCWF trajs is returned.
+    sols = fetch(saver);
+    # Clear caching pool
+    clear!(wp);
+
+    if return_data
+        out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
+        return (tspan, convert(Array{Vector{out_type},1},sols));
+    else
+        nothing;
+    end
+end;
+
+function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, progressbar::Bool = true,
+        return_data::Bool = true, save_data::Bool = true,
+        fpath::Union{String,Missing}=missing,
+        additional_data::Union{Dict{String,T2},Missing}=missing,
+        seed=nothing, rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
+        display_beforeevent=false, display_afterevent=false,
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B},T2}
+
+    # Create a remote channel from where trajectories are read out by the saver
+    remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
+
+    # Create a task fetched by the first available worker that retrieves trajs
+    # from the remote channel and writes them to disk. A progress bar is set up
+    # as well.
+    saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
+        progressbar=progressbar, return_data=return_data, save_data=save_data,
+        fpath=fpath, additional_data=additional_data);
+    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
+    # with jobs from the local process and returns instantly. Jobs consist in
+    # computing a trajectory and pipe it to the remote channel remch.
+    @sync @distributed for i in 1:Ntrajectories
+        put!(remch,begin
+                        if seed == nothing
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        else
+                            timeevolution.mcwf(tspan,psi0,H,J;
+                            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                            display_beforeevent=display_beforeevent,
+                            display_afterevent=display_afterevent,
+                            alg=alg, kwargs...);
+                        end
+                    end);
+    end
+    # Once saver has consumed all queued trajectories produced by all workers, an
+    # array of MCWF trajs is returned.
+    sols = fetch(saver);
+
+    if return_data
+        out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
+        return (tspan, convert(Array{Vector{out_type},1},sols));
+    else
+        nothing;
+    end
+end;
+
+function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, progressbar::Bool = true,
+        return_data::Bool = true, save_data::Bool = true,
+        fpath::Union{String,Missing}=missing,
+        additional_data::Union{Dict{String,T2},Missing}=missing,
+        seed=nothing, rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
+        display_beforeevent=false, display_afterevent=false,
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B},T2}
+
+    # Create a remote channel from where trajectories are read out by the saver
+    remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
+
+    # Create a task fetched by the first available worker that retrieves trajs
+    # from the remote channel and writes them to disk. A progress bar is set up
+    # as well.
+    saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
+        progressbar=progressbar, return_data=return_data, save_data=save_data,
+        fpath=fpath, additional_data=additional_data);
+    wp = CachingPool(workers());
+    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
+    # with jobs from the local process and returns instantly. Jobs consist in
+    # computing a trajectory and pipe it to the remote channel remch.
+    batches = nfolds(1:Ntrajectories,length(wp.workers))
+    @sync @async pmap(wp,1:length(wp.workers)) do i
+        sol_batch = Array{Any,1}(undef, length(batches[i]))
+        Threads.@threads for j in 1:length(batches[i])
+            if seed == nothing
+                sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
+                    rates=rates,fout=fout,Jdagger=Jdagger,
+                    display_beforeevent=display_beforeevent,
+                    display_afterevent=display_afterevent,
+                    alg=alg, kwargs...);
+            else
+                sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
+                    seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                    display_beforeevent=display_beforeevent,
+                    display_afterevent=display_afterevent,
+                    alg=alg, kwargs...);
+            end
+        end
+        for sol in sol_batch
+            put!(remch,sol);
+        end
+    end
     # Once saver has consumed all queued trajectories produced by all workers, an
     # array of MCWF trajs is returned.
     sols = fetch(saver);
@@ -299,4 +454,14 @@ function launch_saver(readout_ch::RemoteChannel{Channel{T1}};
 
     save_data && close(file);
     return return_data ? sols : nothing;
+end;
+
+function nfolds(arr,n::Integer) where T
+    foldsize = fld(length(arr),n)
+    remfoldsize = rem(length(arr),n)
+    if remfoldsize > 0
+        return [[arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]; [arr[end-rem(length(arr),n):end]]]
+    else
+        return [arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]
+    end
 end;

@@ -8,21 +8,18 @@ Module providing parallelised versions of [`QuantumOptics.timeevolution.mcwf`](@
 module ParallelMCWF
 
 using Distributed, Base.Threads
-if !isdefined(ParallelMCWF,:WORKERS)
-    const WORKERS = workers();
-elseif WORKERS !== workers()
-    @warn "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
+if myid() == 1
+    @info "ParallelMCWF loaded with $(nthreads()) threads."
+    @info "ParallelMCWF loaded with $(nworkers()) workers."
+    @info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
 end
-@info "ParallelMCWF loaded with $(nthreads()) threads."
-@info "ParallelMCWF loaded with $(nworkers()) workers."
-@info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
 using ProgressMeter, JLD2
 import OrdinaryDiffEq
 using QuantumOptics.bases, QuantumOptics.states, QuantumOptics.operators
 using QuantumOptics.operators_dense, QuantumOptics.operators_sparse
 using QuantumOptics.timeevolution
 using QuantumOptics.operators_lazysum, QuantumOptics.operators_lazytensor, QuantumOptics.operators_lazyproduct
-@everywhere using QuantumOptics.timeevolution.timeevolution_mcwf
+@everywhere using QuantumOptics.timeevolution.timeevolution_mcwf, QuantumOptics.timeevolution
 const DecayRates = Union{Vector{Float64}, Matrix{Float64}, Nothing}
 Base.@pure pure_inference(fout,T) = Core.Compiler.return_type(fout, T)
 
