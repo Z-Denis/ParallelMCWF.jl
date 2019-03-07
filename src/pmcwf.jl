@@ -275,7 +275,7 @@ function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     # Multi-processed for-loop over all MC trajectories. @async feeds workers()
     # with jobs from the local process and returns instantly. Jobs consist in
     # computing a trajectory and pipe it to the remote channel remch.
-    tsk = @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
+    @sync @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
         put!(remch,begin
                         if seed == nothing
                             timeevolution.mcwf(tspan,psi0,H,J;
@@ -293,7 +293,6 @@ function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
                     end);
         nothing
     end
-    fetch(tsk);
     # Once saver has consumed all queued trajectories produced by all workers, an
     # array of MCWF trajs is returned.
     sols = fetch(saver);
