@@ -111,7 +111,16 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             alg=alg,
             kwargs...);
     elseif parallel_type == :split_threads
-        # TO DO
+        # TO DO: add batch_size as an option
+        return split_threads_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
+            progressbar=progressbar,
+            return_data=return_data,save_data=save_data,
+            fpath=fpath,additional_data=additional_data,
+            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+            display_beforeevent=display_beforeevent,
+            display_afterevent=display_afterevent,
+            alg=alg,
+            kwargs...);
     end
 end
 
@@ -351,6 +360,66 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     end
 end;
 
+function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
+        Ntrajectories=1, progressbar::Bool = true,
+        return_data::Bool = true, save_data::Bool = true,
+        fpath::Union{String,Missing}=missing,
+        additional_data::Union{Dict{String,T2},Missing}=missing,
+        seed=nothing, rates::DecayRates=nothing,
+        fout=nothing, Jdagger::Vector=dagger.(J),
+        display_beforeevent=false, display_afterevent=false,
+        alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
+        kwargs...) where {B<:Basis,T<:Ket{B},T2}
+
+    # Create a remote channel from where trajectories are read out by the saver
+    remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
+
+    # Create a task fetched by the first available worker that retrieves trajs
+    # from the remote channel and writes them to disk. A progress bar is set up
+    # as well.
+    saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
+        progressbar=progressbar, return_data=return_data, save_data=save_data,
+        fpath=fpath, additional_data=additional_data);
+    wp = CachingPool(workers());
+    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
+    # with jobs from the local process and returns instantly. Jobs consist in
+    # computing a trajectory and pipe it to the remote channel remch.
+    batches = nfolds(1:Ntrajectories,length(wp.workers))
+    @sync @async pmap(wp,1:length(wp.workers)) do i
+        sol_batch = Array{Any,1}(undef, length(batches[i]))
+        Threads.@threads for j in 1:length(batches[i])
+            if seed == nothing
+                sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
+                    rates=rates,fout=fout,Jdagger=Jdagger,
+                    display_beforeevent=display_beforeevent,
+                    display_afterevent=display_afterevent,
+                    alg=alg, kwargs...);
+            else
+                sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
+                    seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                    display_beforeevent=display_beforeevent,
+                    display_afterevent=display_afterevent,
+                    alg=alg, kwargs...);
+            end
+        end
+        for sol in sol_batch
+            put!(remch,sol);
+        end
+    end
+    # Once saver has consumed all queued trajectories produced by all workers, an
+    # array of MCWF trajs is returned.
+    sols = fetch(saver);
+    # Clear caching pool
+    clear!(wp);
+
+    if return_data
+        out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
+        return (tspan, convert(Array{Vector{out_type},1},sols));
+    else
+        nothing;
+    end
+end;
+
 function launch_saver(readout_ch::RemoteChannel{Channel{T1}};
         Ntrajectories=1, progressbar::Bool = true, return_data::Bool = true,
         save_data::Bool = true, fpath::Union{String,Missing}=missing,
@@ -386,4 +455,14 @@ function launch_saver(readout_ch::RemoteChannel{Channel{T1}};
 
     save_data && close(file);
     return return_data ? sols : nothing;
+end;
+
+function nfolds(arr,n::Integer) where T
+    foldsize = fld(length(arr),n)
+    remfoldsize = rem(length(arr),n)
+    if remfoldsize > 0
+        return [[arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]; [arr[end-rem(length(arr),n):end]]]
+    else
+        return [arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]
+    end
 end;
