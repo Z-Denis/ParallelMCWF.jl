@@ -64,6 +64,9 @@ using QuantumOptics
 	t, Ψ_threads = pmcwf(T, Ψ₀, H, J; seed=UInt(1), Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:threads);
 	@test allequal(Ψ_threads)
 
+	t, Ψ_parfor = pmcwf(T, Ψ₀, H, J; seed=UInt(1), Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:parfor);
+	@test allequal(Ψ_parfor)
+
 
 	##
 	# Check convergence to the timeevolution.master-evolved solution
@@ -85,6 +88,11 @@ using QuantumOptics
 	ρ_threads = kets_to_dm([Ψ_threads[i][end] for i in 1:length(Ψ_threads)];parallel_type=:none);
 	err_threads =  tracedistance(ρ[end], ρ_threads);
 	@test err_threads < 1e-2
+
+	t, Ψ_parfor = pmcwf(T, Ψ₀, H, J; Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:parfor);
+	ρ_parfor = kets_to_dm([Ψ_pmap[i][end] for i in 1:length(Ψ_pmap)];parallel_type=:none);
+	err_parfor =  tracedistance(ρ[end], ρ_parfor);
+	@test err_parfor < 1e-2
 
 	##
 	# Test kets_to_obs
