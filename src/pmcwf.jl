@@ -13,7 +13,8 @@ be displayed.
 operator type.
 * `Ntrajectories=1`: Number of MCWF trajectories.
 * `parallel_type=:none`: The type of parallelism to employ. The types of
-parallelism included are: `:none`, `:threads` and `:pmap`.
+parallelism included are: `:none`, `:threads`, `:split_threads`, `:parfor` and
+`:pmap`.
 * `progressbar=true`: If `true`, a progression bar is displayed.
 * `return_data=true`: If `true`, the solution is returned as a `Tuple`.
 * `save_data=true`: If `true`, the solution is saved to disk.
@@ -22,7 +23,7 @@ If `return_data=false`, less RAM is used (except for `parallel_type=:threads`).
 Directory must pre-exist, the savefile is created.
 * `additional_data=missing`: If given a `Dict`, entries are added to the
 savefile.
-* `seed=rand(UInt)`: Currently not supported except for `parallel_type=:none`.
+* `seed=rand(UInt)`: seed for each trajectory's random number generator.
 * `rates=ones()`: Vector of decay rates.
 * `fout`: If given, this function `fout(t, psi)` is called every time an
 output should be displayed. ATTENTION: The state `psi` is neither
@@ -77,7 +78,7 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             alg=alg,
             kwargs...);
     elseif parallel_type == :threads
-        # TO DO: only save_data not totally supported. Could use less RAM by
+        # TO DO: save_data-only not totally supported. Could use less RAM by
         # writting trajectories directly to disk but would probably require
         # some locking or some parallel process.
         return multithreaded_mcwf(tspan,psi0,H,J;Ntrajectories=Ntrajectories,
@@ -272,10 +273,10 @@ function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
         progressbar=progressbar, return_data=return_data, save_data=save_data,
         fpath=fpath, additional_data=additional_data);
-    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
-    # with jobs from the local process and returns instantly. Jobs consist in
-    # computing a trajectory and pipe it to the remote channel remch.
-    @sync @async pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
+    # Multi-processed map over all MC trajectories. Maps jobs to workers() from
+    # the local process. Jobs consist in computing a trajectory and pipe it to
+    # the remote channel remch.
+    pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
         put!(remch,begin
                         if seed == nothing
                             timeevolution.mcwf(tspan,psi0,H,J;
@@ -327,9 +328,9 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
         progressbar=progressbar, return_data=return_data, save_data=save_data,
         fpath=fpath, additional_data=additional_data);
-    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
-    # with jobs from the local process and returns instantly. Jobs consist in
-    # computing a trajectory and pipe it to the remote channel remch.
+    # Multi-processed for-loop over all MC trajectories. @distributed feeds
+    # workers() asynchronously with jobs from the local process and is fetched.
+    # Jobs consist incomputing a trajectory and pipe it to the remote channel remch.
     @sync @distributed for i in 1:Ntrajectories
         put!(remch,begin
                         if seed == nothing
@@ -380,11 +381,12 @@ function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         progressbar=progressbar, return_data=return_data, save_data=save_data,
         fpath=fpath, additional_data=additional_data);
     wp = CachingPool(workers());
-    # Multi-processed for-loop over all MC trajectories. @async feeds workers()
-    # with jobs from the local process and returns instantly. Jobs consist in
-    # computing a trajectory and pipe it to the remote channel remch.
+
     batches = nfolds(1:Ntrajectories,length(wp.workers))
-    @sync @async pmap(wp,1:length(wp.workers)) do i
+    # Multi-processed map over all batches of MC trajectories. Maps jobs to
+    # workers() from the local process. Jobs consist in computing a batch of
+    # MC trajectories and pipe them to the remote channel remch.
+    pmap(wp,1:length(wp.workers)) do i
         sol_batch = Array{Any,1}(undef, length(batches[i]))
         Threads.@threads for j in 1:length(batches[i])
             if seed == nothing

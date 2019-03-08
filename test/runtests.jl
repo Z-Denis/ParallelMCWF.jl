@@ -70,7 +70,6 @@ using QuantumOptics
 	t, Ψ_sthreads = pmcwf(T, Ψ₀, H, J; seed=UInt(1), Ntrajectories=Ntrajectories, progressbar=false, parallel_type=:split_threads);
 	@test allequal(Ψ_sthreads)
 
-
 	##
 	# Check convergence to the timeevolution.master-evolved solution
 
@@ -118,6 +117,12 @@ using QuantumOptics
 	O_threads = kets_to_obs(O,Ψ;parallel_type=:threads);
 	@test abs((O_threads - O_ref)/O_ref) < 1e-2
 
+	O_parfor = kets_to_obs(O,Ψ;parallel_type=:parfor);
+	@test abs((O_parfor - O_ref)/O_ref) < 1e-2
+
+	O_sthreads = kets_to_obs(O,Ψ;parallel_type=:split_threads);
+	@test abs((O_sthreads - O_ref)/O_ref) < 1e-2
+
 	# TO DO: test fout
-	# TO DO: test functions of trajs_IO.jl
+	# TO DO: test trajs_IO.jl
 end
