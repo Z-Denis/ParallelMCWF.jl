@@ -384,7 +384,7 @@ function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     # with jobs from the local process and returns instantly. Jobs consist in
     # computing a trajectory and pipe it to the remote channel remch.
     batches = nfolds(1:Ntrajectories,length(wp.workers))
-    @sync @async pmap(wp,1:length(wp.workers)) do i
+    pmap(wp,1:length(wp.workers)) do i
         sol_batch = Array{Any,1}(undef, length(batches[i]))
         Threads.@threads for j in 1:length(batches[i])
             if seed == nothing
