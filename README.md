@@ -1,5 +1,5 @@
 # ParallelMCWF.jl
-Simple package providing parallelised versions of [QuantumOptics.jl](https://github.com/qojulia/QuantumOptics.jl)'s `timeevolution.mcwf` Monte-Carlo wave-function algorithm.
+Simple package providing parallelised versions of [QuantumOptics.jl](https://github.com/qojulia/QuantumOptics.jl)'s `timeevolution.mcwf` Monte-Carlo wave-function algorithm. It has not been fully tested and thus it is not expected to be stable.
 
 ## Features
 - Setup parallel Monte Carlo simulations based on `timeevolution.mcwf`. Multithreading (`Threads.@threads for`), distributed computing (both `pmap` and `@distributed for`) and multithreading on split processes are supported.
@@ -68,7 +68,7 @@ Progress: 100%|█████████████████████�
 ### `kets_to_dm`, `kets_to_obs`
 ```julia
 ρ = kets_to_dm([trajs[i][end] for i in 1:length(trajs)];parallel_type=:pmap);
-E = kets_to_obs(H,[trajs[i][end] for i in 1:length(trajs)];parallel_type=:pmap);
+E = kets_to_obs(H,[trajs[i][end] for i in 1:length(trajs)];parallel_type=:threads);
 ```
 
 ### `save_trajs`, `load_trajs`

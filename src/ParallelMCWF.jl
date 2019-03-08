@@ -15,11 +15,11 @@ if myid() == 1
 end
 using ProgressMeter, JLD2
 import OrdinaryDiffEq
+@everywhere using QuantumOptics # TO DO: Can be avoided
 using QuantumOptics.bases, QuantumOptics.states, QuantumOptics.operators
 using QuantumOptics.operators_dense, QuantumOptics.operators_sparse
 using QuantumOptics.timeevolution
 using QuantumOptics.operators_lazysum, QuantumOptics.operators_lazytensor, QuantumOptics.operators_lazyproduct
-@everywhere using QuantumOptics
 @everywhere using QuantumOptics.timeevolution.timeevolution_mcwf, QuantumOptics.timeevolution
 const DecayRates = Union{Vector{Float64}, Matrix{Float64}, Nothing}
 Base.@pure pure_inference(fout,T) = Core.Compiler.return_type(fout, T)

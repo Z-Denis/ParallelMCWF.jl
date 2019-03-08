@@ -8,7 +8,8 @@ reduced density matrix is reconstructed only on the complementary subspace.
 # Arguments
 * `kets`: 1-dimensional array of kets.
 * `parallel_type=:none`: The type of parallelism to employ. The types of
-parallelism included are: `:none`, `:threads` and `:pmap`.
+parallelism included are: `:none`, `:threads`, `:split_threads`, `:parfor` and
+`:pmap`.
 * `traceout`: Indices of some subspace to be traced out.
 
 See also: [`kets_to_obs`](@ref)
@@ -19,12 +20,14 @@ function kets_to_dm(kets::Array{T,1}; parallel_type::Symbol = :none,
     @assert parallel_type in valptypes "Invalid parallel type. Type :$parallel_type not available.\n"*
                                        "Available types are: "*reduce(*,[":$t " for t in valptypes])
     @assert all([ket.basis == kets[1].basis for ket in kets]) "All kets must share a common basis"
+    #=
     # `traceout` is defined on all workers for `𝒫` to be properly defined everywhere
     r = RemoteChannel(myid())
     @spawnat(myid(), put!(r, traceout))
     @sync for w in workers()
         @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :traceout, fetch(r))))
     end
+    =#
     𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
     ρ = ismissing(traceout) ? DenseOperator(first(kets).basis) : DenseOperator(𝒫(first(kets).basis));
 
@@ -110,7 +113,8 @@ the operator is only evaluated on the corresponding subspace.
 # Arguments
 * `op`: Arbitrary Operator.
 * `parallel_type=:none`: The type of parallelism to employ. The types of
-parallelism included are: `:none`, `:threads` and `:pmap`.
+parallelism included are: `:none`, `:threads`, `:split_threads`, `:parfor` and
+`:pmap`. In practice, use only `:threads` or `:none`.
 * `index`: Indices of the subspace where one wants to evaluate `op`.
 
 See also: [`kets_to_dm`](@ref)
@@ -139,7 +143,7 @@ function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symb
         @everywhere collect(wp.workers) index = $index;
         @everywhere collect(wp.workers) op = $op;
 
-        @sync @async pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
+        pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
             @everywhere myid() obs_p += ismissing(index) ? expect(op,$ket) : expect(index,op,$ket)
             nothing
         end
