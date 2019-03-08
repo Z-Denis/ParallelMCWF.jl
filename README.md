@@ -3,10 +3,10 @@ Simple package providing parallelised versions of [QuantumOptics.jl](https://git
 
 ### Features
 - Setup parallel Monte Carlo simulations based on `timeevolution.mcwf`. Multithreading (`Threads.@threads for`), distributed computing (both `pmap` and `@distributed for`) and multithreading on split processes are supported.
-- Support progress bar. Only the default [ProgressMeter](https://github.com/timholy/ProgressMeter.jl) progress bar is currently supported.
-- Support memory-efficient real-time saving of Monte Carlo trajectories.
-- Build density matrices parallely from arrays of kets with support for both multithreading (`Threads.@threads`) and distributed computing (`pmap`).
-- Average operators parallely over arrays of kets with support for both multithreading (`Threads.@threads`) and distributed computing (`pmap`).
+- Support for progress bar. Only the default [ProgressMeter](https://github.com/timholy/ProgressMeter.jl) progress bar is currently supported.
+- Support for memory-efficient real-time saving of Monte Carlo trajectories.
+- Build density matrices in parallel from arrays of kets with support for both multithreading (`Threads.@threads for` one single or split processes) and distributed computing (`pmap`, `@distributed for`).
+- Average operators in parallel over arrays of kets with support for both multithreading (`Threads.@threads for` one single or split processes) and distributed computing (`pmap`, `@distributed for`).
 - Save to and load from disk MCWF trajectories specifying the range for both the trajectories and the times.
 
 # Examples

@@ -43,19 +43,23 @@ function kets_to_dm(kets::Array{T,1}; parallel_type::Symbol = :none,
             ρ .+= ρs[i];
         end
     elseif parallel_type == :pmap
-        remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
-        acc = @async begin
-            for i in 1:length(kets)
-                @inbounds ρ .+= take!(remch);
-            end
-            nothing
-        end
         wp = CachingPool(workers());
-        @sync @async pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
-            put!(remch, dm(ket));
+        @everywhere collect(wp.workers) ρ_p = $ρ;
+        @everywhere collect(wp.workers) traceout = $traceout;
+        @everywhere collect(wp.workers) 𝒫 = $𝒫;
+
+        pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
+            @everywhere myid() ρ_p += 𝒫($ket);
             nothing
         end
-        fetch(acc);
+
+        r = RemoteChannel(()->Channel{Any}(length(wp)))
+        @sync for w in wp.workers
+            @everywhere w put!($r,ρ_p)
+        end
+        while isready(r)
+            @inbounds ρ .+= take!(r)
+        end
         clear!(wp);
     elseif parallel_type == :parfor
         remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
@@ -81,7 +85,7 @@ function kets_to_dm(kets::Array{T,1}; parallel_type::Symbol = :none,
             nothing
         end
         batches = nfolds(1:length(kets),length(wp.workers))
-        @sync @async pmap(wp,1:length(wp.workers)) do i
+        pmap(wp,1:length(wp.workers)) do i
             ρs = ismissing(traceout) ? [DenseOperator(first(kets).basis) for i in 1:Threads.nthreads()] : [DenseOperator(𝒫(first(kets).basis)) for i in 1:Threads.nthreads()];
             Threads.@threads for ket in kets[batches[i]]
                 ρs[Threads.threadid()] .+= 𝒫(ket);
@@ -119,7 +123,7 @@ function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symb
                                        "Available types are: "*reduce(*,[":$t " for t in valptypes])
     if parallel_type == :none
         for ket in kets
-            obs[] += ismissing(index) ? expect(op,ket) : expect(index,op,ket);
+            @inbounds obs .+= ismissing(index) ? expect(op,ket) : expect(index,op,ket);
         end
     elseif parallel_type == :threads
         obss = zeros(ComplexF64,Threads.nthreads());
@@ -127,48 +131,42 @@ function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symb
             obss[Threads.threadid()] += ismissing(index) ? expect(op,ket) : expect(index,op,ket);
         end
         for i in 1:Threads.nthreads()
-            obs[] += obss[i];
+            @inbounds obs .+= obss[i];
         end
     elseif parallel_type == :pmap
-        remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
         wp = CachingPool(workers());
-        acc = @async begin
-            for i in 1:length(kets)
-                obs[] += take!(remch);
-            end
-            nothing
-        end
+        @everywhere collect(wp.workers) obs_p = 0.0im;
+        @everywhere collect(wp.workers) index = $index;
+        @everywhere collect(wp.workers) op = $op;
+
         @sync @async pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
-            put!(remch, ismissing(index) ? expect(op,ket) : expect(index,op,ket));
+            @everywhere myid() obs_p += ismissing(index) ? expect(op,$ket) : expect(index,op,$ket)
             nothing
         end
-        fetch(acc);
+
+        r = RemoteChannel(()->Channel{Any}(length(wp)))
+        @sync for w in wp.workers
+            @everywhere w put!($r,obs_p)
+        end
+        while isready(r)
+            @inbounds obs .+= take!(r)
+        end
         clear!(wp);
     elseif parallel_type == :parfor
-        remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
-        wp = CachingPool(workers());
-        acc = @async begin
-            for i in 1:length(kets)
-                obs[] += take!(remch);
-            end
-            nothing
+        @inbounds obs = @distributed (+) for ket in kets
+            ismissing(index) ? expect(op,ket) : expect(index,op,ket);
         end
-        @sync @distributed for ket in kets
-            put!(remch, ismissing(index) ? expect(op,ket) : expect(index,op,ket));
-        end
-        fetch(acc);
-        clear!(wp);
     elseif parallel_type == :split_threads
         wp = CachingPool(workers());
         remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
         acc = @async begin
             for i in 1:Threads.nthreads()*length(wp.workers)
-                obs[] += take!(remch);
+                @inbounds obs .+= take!(remch);
             end
             nothing
         end
         batches = nfolds(1:length(kets),length(wp.workers))
-        @sync @async pmap(wp,1:length(wp.workers)) do i
+        pmap(wp,1:length(wp.workers)) do i
             obss = zeros(ComplexF64,Threads.nthreads());
             Threads.@threads for ket in kets[batches[i]]
                 obss[Threads.threadid()] += ismissing(index) ? expect(op,ket) : expect(index,op,ket);
@@ -179,6 +177,22 @@ function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symb
         end
         fetch(acc);
         clear!(wp);
+        #= New version, actually slower ?!
+        wp = CachingPool(workers());
+        @everywhere collect(wp.workers) obs_p = 0.0im;
+        @everywhere collect(wp.workers) index = $index;
+        @everywhere collect(wp.workers) op = $op;
+
+        batches = ParallelMCWF.nfolds(1:length(kets),length(wp.workers))
+        obs = pmap(wp,1:length(wp.workers)) do i
+            obss = zeros(ComplexF64,Threads.nthreads());
+            Threads.@threads for ket in kets[batches[i]]
+                obss[Threads.threadid()] += ismissing(index) ? expect(op,ket) : expect(index,op,ket);
+            end
+            sum(obss)
+        end |> sum
+        clear!(wp);
+        =#
     end
 
     return obs[] / length(kets);
