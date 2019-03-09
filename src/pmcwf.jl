@@ -458,12 +458,8 @@ function launch_saver(readout_ch::RemoteChannel{Channel{T1}};
     return return_data ? sols : nothing;
 end;
 
-function nfolds(arr,n::Integer) where T
-    foldsize = fld(length(arr),n)
-    remfoldsize = rem(length(arr),n)
-    if remfoldsize > 0
-        return [[arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]; [arr[end-rem(length(arr),n):end]]]
-    else
-        return [arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n]
-    end
+function nfolds(arr,n::Integer)
+    foldsize = cld(length(arr),n)
+    lastfoldsize = length(arr) - (n-1)*foldsize
+    return [[arr[foldsize*(i-1)+1:foldsize*i] for i in 1:n-1]; [arr[end-lastfoldsize+1:end]]]
 end;

@@ -16,92 +16,151 @@ See also: [`kets_to_obs`](@ref)
 """
 function kets_to_dm(kets::Array{T,1}; parallel_type::Symbol = :none,
         traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+
     valptypes = [:none, :threads, :pmap, :parfor, :split_threads];
     @assert parallel_type in valptypes "Invalid parallel type. Type :$parallel_type not available.\n"*
                                        "Available types are: "*reduce(*,[":$t " for t in valptypes])
     @assert all([ket.basis == kets[1].basis for ket in kets]) "All kets must share a common basis"
-    #=
-    # `traceout` is defined on all workers for `𝒫` to be properly defined everywhere
-    r = RemoteChannel(myid())
-    @spawnat(myid(), put!(r, traceout))
-    @sync for w in workers()
-        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :traceout, fetch(r))))
-    end
-    =#
-    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
-    ρ = ismissing(traceout) ? DenseOperator(first(kets).basis) : DenseOperator(𝒫(first(kets).basis));
 
     if parallel_type == :none
-        for ket in kets
-            @inbounds ρ .+= 𝒫(ket);
+        𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+        ρ = ismissing(traceout) ? DenseOperator(first(kets).basis) : DenseOperator(𝒫(first(kets).basis));
+        for i in 1:length(kets)
+            @inbounds ρ.data .+= 𝒫(kets[i]).data;
         end
+        return ρ / length(kets);
     elseif parallel_type == :threads
-        ρs = ismissing(traceout) ? [DenseOperator(first(kets).basis) for i in 1:Threads.nthreads()] : [DenseOperator(𝒫(first(kets).basis)) for i in 1:Threads.nthreads()];
-        # Accumulate thread-wise
-        Threads.@threads for ket in kets
-            ρs[Threads.threadid()] .+= 𝒫(ket);
-        end
-        # Sum contributions from all threads
-        for i in 1:Threads.nthreads()
-            ρ .+= ρs[i];
-        end
+        return dm_threads(kets;traceout=traceout);
     elseif parallel_type == :pmap
-        wp = CachingPool(workers());
-        @everywhere collect(wp.workers) ρ_p = $ρ;
-        @everywhere collect(wp.workers) traceout = $traceout;
-        @everywhere collect(wp.workers) 𝒫 = $𝒫;
-
-        pmap(wp, kets, batch_size=cld(length(kets),length(wp.workers))) do ket
-            @everywhere myid() ρ_p += 𝒫($ket);
-            nothing
-        end
-
-        r = RemoteChannel(()->Channel{Any}(length(wp)))
-        @sync for w in wp.workers
-            @everywhere w put!($r,ρ_p)
-        end
-        while isready(r)
-            @inbounds ρ .+= take!(r)
-        end
-        clear!(wp);
+        return dm_pmap(kets;traceout=traceout);
     elseif parallel_type == :parfor
-        remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
-        wp = CachingPool(workers());
-        acc = @async begin
-            for i in 1:length(kets)
-                @inbounds ρ .+= take!(remch);
-            end
-            nothing
-        end
-        @sync @distributed for ket in kets
-            put!(remch, 𝒫(ket));
-        end
-        fetch(acc);
-        clear!(wp);
+        return dm_parfor(kets;traceout=traceout);
     elseif parallel_type == :split_threads
-        wp = CachingPool(workers());
-        remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
-        acc = @async begin
-            for i in 1:Threads.nthreads()*length(wp.workers)
-                @inbounds ρ .+= take!(remch);
-            end
-            nothing
-        end
-        batches = nfolds(1:length(kets),length(wp.workers))
-        pmap(wp,1:length(wp.workers)) do i
-            ρs = ismissing(traceout) ? [DenseOperator(first(kets).basis) for i in 1:Threads.nthreads()] : [DenseOperator(𝒫(first(kets).basis)) for i in 1:Threads.nthreads()];
-            Threads.@threads for ket in kets[batches[i]]
-                ρs[Threads.threadid()] .+= 𝒫(ket);
-            end
-            for ρ_thread in ρs
-                put!(remch,ρ_thread)
-            end
-        end
-        fetch(acc);
-        clear!(wp);
+        return dm_split_threads(kets;traceout=traceout);
     end
-    return ρ / length(kets);
 end;
+
+function dm_threads(kets::Array{T,1}; traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+    N = length(kets);
+    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+    b = ismissing(traceout) ? first(kets).basis : (𝒫(first(kets).basis)).basis_l;
+    ρs = [DenseOperator(b) for i in 1:Threads.nthreads()];
+    Threads.@threads for i in 1:length(kets)
+        @inbounds ρs[Threads.threadid()].data .+= 𝒫(kets[i]).data;
+    end
+    @inbounds for i in 2:length(ρs)
+        ρs[1].data .+= ρs[i].data;
+    end
+    return ρs[1]/N
+end
+
+function dm_pmap(kets::Array{T,1}; traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+    N = length(kets);
+    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+    wp = CachingPool(workers())
+    r = RemoteChannel(1)
+    b = ismissing(traceout) ? first(kets).basis : (𝒫(first(kets).basis)).basis_l;
+    put!(r, b)
+    @sync for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :ρ, DenseOperator(fetch(r)))))
+    end
+    pmap(wp,1:N;batch_size=cld(N,length(wp.workers))) do i
+        @inbounds ρ.data .+= 𝒫(kets[i]).data;
+    end
+    R = DenseOperator(b);
+    for w in wp.workers
+        @inbounds R.data .+= @fetchfrom w ρ.data
+    end
+    @sync for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :ρ, nothing)))
+    end
+    return R/N
+end
+
+function dm_parfor(kets::Array{T,1}; traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+    N = length(kets);
+    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+    b = ismissing(traceout) ? first(kets).basis : (𝒫(first(kets).basis)).basis_l;
+    wp = CachingPool(workers())
+    r = RemoteChannel(1)
+    put!(r, b)
+    @sync for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :ρ, DenseOperator(fetch(r)))))
+    end
+    # @distributed (+) is here much slower
+    @sync @distributed for i in 1:N
+        @inbounds ρ.data .+= 𝒫(kets[i]).data;
+    end
+    R = DenseOperator(b);
+    for w in wp.workers
+        @inbounds R.data .+= @fetchfrom w ρ.data
+    end
+    @sync for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :ρ, nothing)))
+    end
+    return R/N
+end
+
+function dm_split_threads(kets::Array{T,1}; traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+    N = length(kets);
+    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+    wp = CachingPool(workers())
+    r = RemoteChannel(1)
+    b = ismissing(traceout) ? first(kets).basis : (𝒫(first(kets).basis)).basis_l;
+    put!(r, b)
+    @sync @async for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :hb, fetch(r))));
+    end
+    @sync @async for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, :(ρs = [DenseOperator(hb) for i in 1:Threads.nthreads()])));
+    end
+    batches = nfolds(1:length(kets),length(wp.workers))
+
+    pmap(wp,1:length(wp.workers)) do i
+        Threads.@threads for j in 1:length(batches[i])
+            @inbounds ρs[Threads.threadid()].data .+= dm(kets[batches[i][j]]).data;
+        end
+        @inbounds for i in 2:length(ρs)
+            ρs[1].data .+= ρs[i].data;
+        end
+    end
+    R = DenseOperator(b);
+    for w in wp.workers
+        @inbounds R.data .+= @fetchfrom w ρs[1].data
+    end
+    @sync for w in wp.workers
+        @spawnat(w, Core.eval(@__MODULE__, Expr(:(=), :ρs, nothing)))
+    end
+    return R/N
+end
+
+# Surprisingly, slightly faster
+function dm_split_threads_v2(kets::Array{T,1}; traceout::Union{Vector{Integer},Missing}=missing) where {T<:StateVector}
+    N = length(kets);
+    ρ = ismissing(traceout) ? DenseOperator(first(kets).basis) : DenseOperator(𝒫(first(kets).basis));
+    𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
+    wp = CachingPool(workers());
+    remch = RemoteChannel(()->Channel{Any}(Inf)); # TO DO: add some finite buffer size
+    acc = @async begin
+        @inbounds for i in 1:Threads.nthreads()*length(wp.workers)
+            ρ.data .+= take!(remch).data;
+        end
+        nothing
+    end
+    batches = nfolds(1:length(kets),length(wp.workers))
+    pmap(wp,1:length(wp.workers)) do i
+        ρs = ismissing(traceout) ? [DenseOperator(first(kets).basis) for i in 1:Threads.nthreads()] : [DenseOperator(𝒫(first(kets).basis)) for i in 1:Threads.nthreads()];
+        Threads.@threads for ket in kets[batches[i]]
+            @inbounds ρs[Threads.threadid()].data .+= 𝒫(ket).data;
+        end
+        for j in 1:length(ρs)
+            put!(remch,ρs[j])
+        end
+    end
+    fetch(acc);
+    clear!(wp);
+    return ρ/N
+end
 
 """
     kets_to_obs(op, kets; parallel_type, index)
