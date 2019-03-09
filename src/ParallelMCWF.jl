@@ -15,7 +15,6 @@ if myid() == 1
 end
 using ProgressMeter, JLD2
 import OrdinaryDiffEq
-@everywhere using QuantumOptics # TO DO: Can be avoided
 using QuantumOptics.bases, QuantumOptics.states, QuantumOptics.operators
 using QuantumOptics.operators_dense, QuantumOptics.operators_sparse
 using QuantumOptics.timeevolution
@@ -32,3 +31,6 @@ include("pmcwf.jl")
 export pmcwf
 
 end # module
+
+using Distributed
+@everywhere using QuantumOptics # TO DO: Can be avoided
