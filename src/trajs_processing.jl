@@ -22,7 +22,7 @@ function kets_to_dm(kets::Array{T,1}; parallel_type::Symbol = :none,
         𝒫(x) = ismissing(traceout) ? dm(x) : ptrace(x, traceout);
         ρ = ismissing(traceout) ? DenseOperator(first(kets).basis) : DenseOperator(𝒫(first(kets).basis));
         for i in 1:length(kets)
-            @inbounds ρ.data .+= 𝒫(kets[i]).data;
+            @inbounds ρ.data += 𝒫(kets[i]).data;
         end
         return ρ / length(kets);
     elseif parallel_type == :threads
@@ -181,7 +181,7 @@ See also: [`kets_to_dm`](@ref)
 function kets_to_obs(op::AbstractOperator, kets::Array{T,1}; parallel_type::Symbol = :none,
         index=missing) where {T<:StateVector}
     if parallel_type == :none
-        obs = zeros(ComplexF64,1);
+        obs = zero(ComplexF64);
         for i in 1:length(kets)
             @inbounds obs += ismissing(index) ? expect(op,kets[i]) : expect(index,op,kets[i]);
         end
