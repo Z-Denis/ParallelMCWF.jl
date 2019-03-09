@@ -58,10 +58,6 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         display_beforeevent=false, display_afterevent=false,
         alg=OrdinaryDiffEq.AutoTsit5(OrdinaryDiffEq.Rosenbrock23()),
         kwargs...) where {B<:Basis,T<:Ket{B},T2}
-
-    valptypes = [:none, :threads, :pmap, :parfor, :split_threads];
-    @assert parallel_type in valptypes "Invalid parallel type. Type :$parallel_type not available.\n"*
-                                       "Available types are: "*reduce(*,[":$t " for t in valptypes])
     @assert return_data || save_data "pmcwf outputs nothing"
     save_data && @assert !ismissing(fpath) "ERROR: savefile path is missing"
     save_data && @assert isdir(splitdir(fpath)[1]) "ERROR: accessing "*splitdir(fpath)[1]*": No such directory"
@@ -122,6 +118,10 @@ function pmcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
             display_afterevent=display_afterevent,
             alg=alg,
             kwargs...);
+    else
+        valptypes = [:none, :threads, :pmap, :parfor, :split_threads];
+        error("Invalid parallel type. Type :$parallel_type not available.\n"*
+              "Available types are: "*reduce(*,[":$t " for t in valptypes]))
     end
 end
 
