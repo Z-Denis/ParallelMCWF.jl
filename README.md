@@ -1,5 +1,6 @@
 # ParallelMCWF.jl
 [![Build Status](https://travis-ci.com/Z-Denis/ParallelMCWF.jl.svg?branch=master)](https://travis-ci.com/Z-Denis/ParallelMCWF.jl)
+
 Simple package providing parallelised versions of [QuantumOptics.jl](https://github.com/qojulia/QuantumOptics.jl)'s `timeevolution.mcwf` Monte-Carlo wave-function algorithm. Most feature implementations are suboptimal, it has not been fully tested yet and thus it is not expected to be totally stable.
 
 ## Features
