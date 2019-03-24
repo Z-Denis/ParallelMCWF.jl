@@ -155,7 +155,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         ProgressMeter.update!(progress, 0);
     end
     for i in 1:Ntrajectories
-        if seed == nothing
+        if isnothing(seed)
             sol = timeevolution.mcwf(tspan,psi0,H,J;
                 rates=rates,fout=fout,Jdagger=Jdagger,
                 display_beforeevent=display_beforeevent,
@@ -266,26 +266,29 @@ function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
         progressbar=progressbar, return_data=return_data, save_data=save_data,
         fpath=fpath, additional_data=additional_data);
-    # Multi-processed map over all MC trajectories. Maps jobs to workers() from
-    # the local process. Jobs consist in computing a trajectory and pipe it to
-    # the remote channel remch.
-    pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
-        put!(remch,begin
-                        if seed == nothing
-                            timeevolution.mcwf(tspan,psi0,H,J;
-                            rates=rates,fout=fout,Jdagger=Jdagger,
-                            display_beforeevent=display_beforeevent,
-                            display_afterevent=display_afterevent,
-                            alg=alg, kwargs...);
-                        else
-                            timeevolution.mcwf(tspan,psi0,H,J;
-                            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
-                            display_beforeevent=display_beforeevent,
-                            display_afterevent=display_afterevent,
-                            alg=alg, kwargs...);
-                        end
-                    end);
-        nothing
+        batches = nfolds(1:Ntrajectories,length(wp.workers))
+    batches = nfolds(1:Ntrajectories,length(wp.workers))
+    # Multi-processed map over all batches of MC trajectories. Maps jobs to
+    # workers() from the local process. Jobs consist in computing a batch of
+    # MC trajectories and pipe them to the remote channel remch.
+    pmap(wp,1:length(wp.workers)) do i
+        for j in 1:length(batches[i])
+            put!(remch,begin
+                if isnothing(seed)
+                    timeevolution.mcwf(tspan,psi0,H,J;
+                        rates=rates,fout=fout,Jdagger=Jdagger,
+                        display_beforeevent=display_beforeevent,
+                        display_afterevent=display_afterevent,
+                        alg=alg, kwargs...);
+                else
+                    timeevolution.mcwf(tspan,psi0,H,J;
+                        seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                        display_beforeevent=display_beforeevent,
+                        display_afterevent=display_afterevent,
+                        alg=alg, kwargs...);
+                end
+            end);
+        end
     end
     # Once saver has consumed all queued trajectories produced by all workers, an
     # array of MCWF trajs is returned.
@@ -323,10 +326,10 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         fpath=fpath, additional_data=additional_data);
     # Multi-processed for-loop over all MC trajectories. @distributed feeds
     # workers() asynchronously with jobs from the local process and is fetched.
-    # Jobs consist incomputing a trajectory and pipe it to the remote channel remch.
+    # Jobs consist in computing a trajectory and pipe it to the remote channel remch.
     @sync @distributed for i in 1:Ntrajectories
         put!(remch,begin
-                        if seed == nothing
+                        if isnothing(seed)
                             timeevolution.mcwf(tspan,psi0,H,J;
                             rates=rates,fout=fout,Jdagger=Jdagger,
                             display_beforeevent=display_beforeevent,
@@ -382,7 +385,7 @@ function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     pmap(wp,1:length(wp.workers)) do i
         sol_batch = Array{Any,1}(undef, length(batches[i]))
         Threads.@threads for j in 1:length(batches[i])
-            if seed == nothing
+            if isnothing(seed)
                 sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
                     rates=rates,fout=fout,Jdagger=Jdagger,
                     display_beforeevent=display_beforeevent,
