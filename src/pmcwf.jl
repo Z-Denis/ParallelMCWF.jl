@@ -216,21 +216,14 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
         sols::Array{Vector{out_type},1} = [Vector{out_type}() for i in 1:Ntrajectories];
     end
+    seed = isnothing(seed) ? [rand(UInt) for i in 1:Threads.nthreads()] : [seed for i in 1:Threads.nthreads()];
     # Multi-threaded for-loop over all MC trajectories.
     Threads.@threads for i in 1:Ntrajectories
-        if seed == nothing
-            sol = timeevolution.mcwf(tspan,psi0,H,J;
-                rates=rates,fout=fout,Jdagger=Jdagger,
+        sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed[Threads.threadid()],rates=rates,fout=fout,Jdagger=Jdagger,
                 display_beforeevent=display_beforeevent,
                 display_afterevent=display_afterevent,
                 alg=alg, kwargs...);
-        else
-            sol = timeevolution.mcwf(tspan,psi0,H,J;
-                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
-                display_beforeevent=display_beforeevent,
-                display_afterevent=display_afterevent,
-                alg=alg, kwargs...);
-        end
         #save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         # Updates progress bar if called from the main thread or adds a pending update otherwise
