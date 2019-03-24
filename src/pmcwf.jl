@@ -155,7 +155,7 @@ function serial_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         ProgressMeter.update!(progress, 0);
     end
     for i in 1:Ntrajectories
-        if seed == nothing
+        if isnothing(seed)
             sol = timeevolution.mcwf(tspan,psi0,H,J;
                 rates=rates,fout=fout,Jdagger=Jdagger,
                 display_beforeevent=display_beforeevent,
@@ -216,21 +216,14 @@ function multithreaded_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         out_type = fout == nothing ? typeof(psi0) : pure_inference(fout, Tuple{eltype(tspan),typeof(psi0)});
         sols::Array{Vector{out_type},1} = [Vector{out_type}() for i in 1:Ntrajectories];
     end
+    seed = isnothing(seed) ? [rand(UInt) for i in 1:Threads.nthreads()] : [seed for i in 1:Threads.nthreads()];
     # Multi-threaded for-loop over all MC trajectories.
     Threads.@threads for i in 1:Ntrajectories
-        if seed == nothing
-            sol = timeevolution.mcwf(tspan,psi0,H,J;
-                rates=rates,fout=fout,Jdagger=Jdagger,
+        sol = timeevolution.mcwf(tspan,psi0,H,J;
+                seed=seed[Threads.threadid()],rates=rates,fout=fout,Jdagger=Jdagger,
                 display_beforeevent=display_beforeevent,
                 display_afterevent=display_afterevent,
                 alg=alg, kwargs...);
-        else
-            sol = timeevolution.mcwf(tspan,psi0,H,J;
-                seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
-                display_beforeevent=display_beforeevent,
-                display_afterevent=display_afterevent,
-                alg=alg, kwargs...);
-        end
         #save_data ? file["trajs/"*string(i)] = sol[2] : nothing;
         return_data ? sols[i] = sol[2] : nothing;
         # Updates progress bar if called from the main thread or adds a pending update otherwise
@@ -273,26 +266,29 @@ function pmap_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     saver = @async launch_saver(remch; Ntrajectories=Ntrajectories,
         progressbar=progressbar, return_data=return_data, save_data=save_data,
         fpath=fpath, additional_data=additional_data);
-    # Multi-processed map over all MC trajectories. Maps jobs to workers() from
-    # the local process. Jobs consist in computing a trajectory and pipe it to
-    # the remote channel remch.
-    pmap(wp, 1:Ntrajectories, batch_size=cld(Ntrajectories,length(wp.workers))) do i
-        put!(remch,begin
-                        if seed == nothing
-                            timeevolution.mcwf(tspan,psi0,H,J;
-                            rates=rates,fout=fout,Jdagger=Jdagger,
-                            display_beforeevent=display_beforeevent,
-                            display_afterevent=display_afterevent,
-                            alg=alg, kwargs...);
-                        else
-                            timeevolution.mcwf(tspan,psi0,H,J;
-                            seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
-                            display_beforeevent=display_beforeevent,
-                            display_afterevent=display_afterevent,
-                            alg=alg, kwargs...);
-                        end
-                    end);
-        nothing
+        batches = nfolds(1:Ntrajectories,length(wp.workers))
+    batches = nfolds(1:Ntrajectories,length(wp.workers))
+    # Multi-processed map over all batches of MC trajectories. Maps jobs to
+    # workers() from the local process. Jobs consist in computing a batch of
+    # MC trajectories and pipe them to the remote channel remch.
+    pmap(wp,1:length(wp.workers)) do i
+        for j in 1:length(batches[i])
+            put!(remch,begin
+                if isnothing(seed)
+                    timeevolution.mcwf(tspan,psi0,H,J;
+                        rates=rates,fout=fout,Jdagger=Jdagger,
+                        display_beforeevent=display_beforeevent,
+                        display_afterevent=display_afterevent,
+                        alg=alg, kwargs...);
+                else
+                    timeevolution.mcwf(tspan,psi0,H,J;
+                        seed=seed,rates=rates,fout=fout,Jdagger=Jdagger,
+                        display_beforeevent=display_beforeevent,
+                        display_afterevent=display_afterevent,
+                        alg=alg, kwargs...);
+                end
+            end);
+        end
     end
     # Once saver has consumed all queued trajectories produced by all workers, an
     # array of MCWF trajs is returned.
@@ -330,10 +326,10 @@ function distributed_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
         fpath=fpath, additional_data=additional_data);
     # Multi-processed for-loop over all MC trajectories. @distributed feeds
     # workers() asynchronously with jobs from the local process and is fetched.
-    # Jobs consist incomputing a trajectory and pipe it to the remote channel remch.
+    # Jobs consist in computing a trajectory and pipe it to the remote channel remch.
     @sync @distributed for i in 1:Ntrajectories
         put!(remch,begin
-                        if seed == nothing
+                        if isnothing(seed)
                             timeevolution.mcwf(tspan,psi0,H,J;
                             rates=rates,fout=fout,Jdagger=Jdagger,
                             display_beforeevent=display_beforeevent,
@@ -389,7 +385,7 @@ function split_threads_mcwf(tspan, psi0::T, H::AbstractOperator{B,B}, J::Vector;
     pmap(wp,1:length(wp.workers)) do i
         sol_batch = Array{Any,1}(undef, length(batches[i]))
         Threads.@threads for j in 1:length(batches[i])
-            if seed == nothing
+            if isnothing(seed)
                 sol_batch[j] = timeevolution.mcwf(tspan,psi0,H,J;
                     rates=rates,fout=fout,Jdagger=Jdagger,
                     display_beforeevent=display_beforeevent,
