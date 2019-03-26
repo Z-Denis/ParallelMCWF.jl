@@ -10,8 +10,8 @@ module ParallelMCWF
 using Distributed, Base.Threads
 if myid() == 1
     @info "ParallelMCWF loaded with $(nthreads()) threads per process."
-    @info "ParallelMCWF loaded with $(nworkers()) workers."
-    @info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
+    @info "ParallelMCWF loaded with $(nprocs()) workers."
+    #@info "Processes must be added BEFORE using `using ParallelMCWF`, see Julia issue #3674."
 end
 using ProgressMeter, JLD2
 import OrdinaryDiffEq
